@@ -268,3 +268,70 @@
         (ok true)
     )
 )
+
+;; Transfer System Functions
+
+(define-public (request-credential-transfer 
+    (credential-id (string-ascii 64))
+    (new-owner principal)
+    (transfer-type (string-ascii 32))
+    (expiry-time uint))
+    
+    (let (
+        (transfer-id (var-get transfer-counter))
+        (credential (unwrap! (map-get? credentials {id: credential-id, student: tx-sender}) ERR-CREDENTIAL-NOT-FOUND))
+    )
+        (asserts! (not (get revoked credential)) ERR-INVALID-STATUS)
+        
+        (map-set transfer-requests transfer-id
+            {
+                credential-id: credential-id,
+                old-owner: tx-sender,
+                new-owner: new-owner,
+                status: "pending",
+                request-time: block-height,
+                expiry-time: expiry-time,
+                transfer-type: transfer-type
+            }
+        )
+        
+        (var-set transfer-counter (+ transfer-id u1))
+        (ok transfer-id)
+    )
+)
+
+;; Helper Functions
+
+(define-private (is-institution (address principal))
+    (default-to false (get active (map-get? institutions address)))
+)
+
+(define-private (process-credential-issuance
+    (credential-id (string-ascii 64))
+    (student principal)
+    (degree (string-ascii 64))
+    (year uint)
+    (metadata-url (string-ascii 256))
+    (expiry-date uint)
+    (category (string-ascii 32)))
+    
+    (begin
+        (map-set credentials 
+            {id: credential-id, student: student}
+            {
+                institution: tx-sender,
+                degree: degree,
+                year: year,
+                verified: true,
+                endorsements: u0,
+                metadata-url: metadata-url,
+                expiry-date: expiry-date,
+                revoked: false,
+                category: category,
+                issue-date: block-height,
+                last-endorsed: u0
+            }
+        )
+        true
+    )
+)
