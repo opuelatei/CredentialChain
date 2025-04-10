@@ -33,6 +33,8 @@
 (define-constant ERR-INVALID-DELEGATION (err u110))
 (define-constant ERR-ALREADY-ENDORSED (err u111))
 (define-constant ERR-INVALID-EXPIRY (err u112))
+(define-constant ERR-INVALID-INPUT (err u113))
+(define-constant ERR-EMPTY-STRING (err u120))
 (define-constant MINIMUM-STAKE u1000000)
 (define-constant MAX-BATCH-SIZE u50)
 
@@ -107,12 +109,65 @@
     }
 )
 
+;; Input Validation Functions
+
+(define-private (validate-non-empty-string (input (string-ascii 64)))
+    (> (len input) u0)
+)
+
+(define-private (validate-url (url (string-ascii 256)))
+    ;; Basic URL validation - ensure it's not empty and contains expected characters
+    (and
+        (> (len url) u0)
+        ;; Additional URL validation logic could be added here
+        true
+    )
+)
+
+(define-private (validate-year (year uint))
+    ;; Basic year validation
+    (and
+        (> year u1900)  ;; Reasonable minimum year
+        (< year (+ u2100 u1))  ;; Reasonable maximum year (adjust as needed)
+    )
+)
+
+(define-private (validate-expiry (expiry uint))
+    (> expiry stacks-block-height)
+)
+
+(define-private (validate-credential-id (credential-id (string-ascii 64)))
+    ;; Ensure credential ID is not empty and follows expected format
+    (and
+        (> (len credential-id) u0)
+        ;; Additional validation logic could be added here
+        true
+    )
+)
+
+(define-private (validate-permissions (permissions (list 10 (string-ascii 32))))
+    ;; Ensure the permissions list is not empty and contains valid permissions
+    (and
+        (> (len permissions) u0)
+        ;; Additional validation for permission values could be added here
+        true
+    )
+)
+
+(define-private (validate-endorsement-weight (weight uint))
+    ;; Ensure weight is within acceptable range
+    (and
+        (>= weight u1)
+        (<= weight u100)  ;; Maximum weight allowed
+    )
+)
+
 ;; Institution Management Functions
 
 (define-public (register-institution (name (string-ascii 64)))
     (let ((caller tx-sender))
         (asserts! (not (default-to false (get active (map-get? institutions caller)))) ERR-ALREADY-REGISTERED)
-		(asserts! (> (len name) u0) (err u120))
+        (asserts! (validate-non-empty-string name) ERR-EMPTY-STRING)
         (try! (stx-transfer? MINIMUM-STAKE caller (as-contract tx-sender)))
         
         (map-set institutions caller {
@@ -137,6 +192,9 @@
     (expiry uint))
     (let ((institution tx-sender))
         (asserts! (is-institution institution) ERR-NOT-AUTHORIZED)
+        (asserts! (validate-permissions permissions) ERR-INVALID-INPUT)
+        (asserts! (validate-expiry expiry) ERR-INVALID-EXPIRY)
+        
         (map-set institution-delegates 
             {institution: institution, delegate: delegate-address}
             {
@@ -167,6 +225,12 @@
     )
         (asserts! (get active inst-data) ERR-NOT-AUTHORIZED)
         (asserts! (not (get suspension-status inst-data)) ERR-INVALID-STATUS)
+        (asserts! (validate-credential-id credential-id) ERR-INVALID-INPUT)
+        (asserts! (validate-non-empty-string degree) ERR-INVALID-INPUT)
+        (asserts! (validate-year year) ERR-INVALID-INPUT)
+        (asserts! (validate-url metadata-url) ERR-INVALID-INPUT)
+        (asserts! (validate-expiry expiry-date) ERR-INVALID-EXPIRY)
+        (asserts! (validate-non-empty-string category) ERR-INVALID-INPUT)
         
         (map-set credentials 
             {id: credential-id, student: student}
@@ -213,7 +277,7 @@
     )
         (asserts! (<= batch-size MAX-BATCH-SIZE) ERR-INVALID-BATCH-SIZE)
         (asserts! (is-institution institution) ERR-NOT-AUTHORIZED)
-		;; Validate input lengths match
+        ;; Validate input lengths match
         (asserts! (and 
             (is-eq batch-size (len students))
             (is-eq batch-size (len degrees))
@@ -222,6 +286,9 @@
             (is-eq batch-size (len expiry-dates))
             (is-eq batch-size (len categories))
         ) ERR-INVALID-BATCH-SIZE)
+        
+        ;; Validate each expiry date
+        (asserts! (fold check-all-expiry-dates expiry-dates true) ERR-INVALID-EXPIRY)
         
         (ok (map process-credential-issuance 
             credential-ids
@@ -232,6 +299,11 @@
             expiry-dates
             categories))
     )
+)
+
+;; Helper for batch validation
+(define-private (check-all-expiry-dates (expiry uint) (valid-so-far bool))
+    (and valid-so-far (validate-expiry expiry))
 )
 
 ;; Endorsement System Functions
@@ -251,6 +323,12 @@
         (asserts! (get active endorser-data) ERR-NOT-AUTHORIZED)
         (asserts! (not (get revoked credential)) ERR-INVALID-STATUS)
         (asserts! (< stacks-block-height (get expiry-date credential)) ERR-EXPIRED)
+        (asserts! (validate-credential-id credential-id) ERR-INVALID-INPUT)
+        (asserts! (validate-endorsement-weight weight) ERR-INVALID-INPUT)
+        (asserts! (validate-non-empty-string endorser-type) ERR-INVALID-INPUT)
+        
+        ;; Check if already endorsed by this endorser
+        (asserts! (is-none (map-get? endorsements {credential-id: credential-id, endorser: endorser})) ERR-ALREADY-ENDORSED)
         
         (map-set endorsements 
             {credential-id: credential-id, endorser: endorser}
@@ -295,7 +373,10 @@
         (credential (unwrap! (map-get? credentials {id: credential-id, student: tx-sender}) ERR-CREDENTIAL-NOT-FOUND))
     )
         (asserts! (not (get revoked credential)) ERR-INVALID-STATUS)
-        (asserts! (> expiry-time stacks-block-height) ERR-INVALID-EXPIRY)
+        (asserts! (validate-expiry expiry-time) ERR-INVALID-EXPIRY)
+        (asserts! (validate-credential-id credential-id) ERR-INVALID-INPUT)
+        (asserts! (validate-non-empty-string transfer-type) ERR-INVALID-INPUT)
+        (asserts! (not (is-eq tx-sender new-owner)) ERR-INVALID-INPUT)
         
         (map-set transfer-requests transfer-id
             {
@@ -325,7 +406,6 @@
     ;; Return sanitized string
     input
 )
-
 
 (define-private (process-credential-issuance
     (credential-id (string-ascii 64))
