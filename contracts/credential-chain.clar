@@ -162,6 +162,19 @@
     )
 )
 
+(define-private (validate-principal (address principal))
+    (not (is-eq address tx-sender))  ;; Can't delegate to yourself
+)
+
+(define-private (validate-student (student-address principal))
+    (not (is-eq student-address tx-sender))  ;; Institution can't issue to itself
+)
+
+(define-private (validate-comment (comment-text (string-ascii 256)))
+    ;; We allow empty comments, but limit the length
+    (<= (len comment-text) u200)  ;; Set reasonable max length
+)
+
 ;; Institution Management Functions
 
 (define-public (register-institution (name (string-ascii 64)))
@@ -194,6 +207,7 @@
         (asserts! (is-institution institution) ERR-NOT-AUTHORIZED)
         (asserts! (validate-permissions permissions) ERR-INVALID-INPUT)
         (asserts! (validate-expiry expiry) ERR-INVALID-EXPIRY)
+		(asserts! (validate-principal delegate-address) ERR-INVALID-DELEGATION)
         
         (map-set institution-delegates 
             {institution: institution, delegate: delegate-address}
@@ -231,6 +245,7 @@
         (asserts! (validate-url metadata-url) ERR-INVALID-INPUT)
         (asserts! (validate-expiry expiry-date) ERR-INVALID-EXPIRY)
         (asserts! (validate-non-empty-string category) ERR-INVALID-INPUT)
+		(asserts! (validate-student student) ERR-INVALID-INPUT)
         
         (map-set credentials 
             {id: credential-id, student: student}
@@ -326,6 +341,7 @@
         (asserts! (validate-credential-id credential-id) ERR-INVALID-INPUT)
         (asserts! (validate-endorsement-weight weight) ERR-INVALID-INPUT)
         (asserts! (validate-non-empty-string endorser-type) ERR-INVALID-INPUT)
+		(asserts! (validate-comment comment) ERR-INVALID-INPUT)
         
         ;; Check if already endorsed by this endorser
         (asserts! (is-none (map-get? endorsements {credential-id: credential-id, endorser: endorser})) ERR-ALREADY-ENDORSED)
