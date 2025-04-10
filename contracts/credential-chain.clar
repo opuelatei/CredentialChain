@@ -335,3 +335,36 @@
         true
     )
 )
+
+;; Read-Only Functions
+
+(define-read-only (get-institution-info (institution principal))
+    (map-get? institutions institution)
+)
+
+(define-read-only (get-credential-info (credential-id (string-ascii 64)) (student principal))
+    (map-get? credentials {id: credential-id, student: student})
+)
+
+(define-read-only (get-endorsement-info 
+    (credential-id (string-ascii 64)) 
+    (endorser principal))
+    (map-get? endorsements {credential-id: credential-id, endorser: endorser})
+)
+
+(define-read-only (get-delegate-info 
+    (institution principal) 
+    (delegate principal))
+    (map-get? institution-delegates {institution: institution, delegate: delegate})
+)
+
+(define-read-only (is-credential-valid (credential-id (string-ascii 64)) (student principal))
+    (match (map-get? credentials {id: credential-id, student: student})
+        credential (and 
+            (not (get revoked credential))
+            (< block-height (get expiry-date credential))
+            (get verified credential)
+        )
+        false
+    )
+)
