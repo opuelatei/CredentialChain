@@ -32,6 +32,7 @@
 (define-constant ERR-INVALID-BATCH-SIZE (err u109))
 (define-constant ERR-INVALID-DELEGATION (err u110))
 (define-constant ERR-ALREADY-ENDORSED (err u111))
+(define-constant ERR-INVALID-EXPIRY (err u112))
 (define-constant MINIMUM-STAKE u1000000)
 (define-constant MAX-BATCH-SIZE u50)
 
@@ -62,6 +63,7 @@
         degree: (string-ascii 64),
         year: uint,
         verified: bool,
+        validation-level: uint,
         endorsements: uint,
         metadata-url: (string-ascii 256),
         expiry-date: uint,
@@ -110,6 +112,7 @@
 (define-public (register-institution (name (string-ascii 64)))
     (let ((caller tx-sender))
         (asserts! (not (default-to false (get active (map-get? institutions caller)))) ERR-ALREADY-REGISTERED)
+		(asserts! (> (len name) u0) (err u120))
         (try! (stx-transfer? MINIMUM-STAKE caller (as-contract tx-sender)))
         
         (map-set institutions caller {
@@ -119,8 +122,8 @@
             reputation-score: u100,
             active: true,
             suspension-status: false,
-            registration-date: block-height,
-            last-update: block-height
+            registration-date: stacks-block-height,
+            last-update: stacks-block-height
         })
         
         (var-set total-institutions (+ (var-get total-institutions) u1))
@@ -139,7 +142,7 @@
             {
                 active: true,
                 permissions: permissions,
-                added-at: block-height,
+                added-at: stacks-block-height,
                 expiry: expiry
             }
         )
@@ -172,12 +175,13 @@
                 degree: degree,
                 year: year,
                 verified: true,
+                validation-level: u0,
                 endorsements: u0,
                 metadata-url: metadata-url,
                 expiry-date: expiry-date,
                 revoked: false,
                 category: category,
-                issue-date: block-height,
+                issue-date: stacks-block-height,
                 last-endorsed: u0
             }
         )
@@ -186,7 +190,7 @@
             (merge inst-data 
                 {
                     credentials-issued: (+ (get credentials-issued inst-data) u1),
-                    last-update: block-height
+                    last-update: stacks-block-height
                 }
             )
         )
@@ -209,6 +213,15 @@
     )
         (asserts! (<= batch-size MAX-BATCH-SIZE) ERR-INVALID-BATCH-SIZE)
         (asserts! (is-institution institution) ERR-NOT-AUTHORIZED)
+		;; Validate input lengths match
+        (asserts! (and 
+            (is-eq batch-size (len students))
+            (is-eq batch-size (len degrees))
+            (is-eq batch-size (len years))
+            (is-eq batch-size (len metadata-urls))
+            (is-eq batch-size (len expiry-dates))
+            (is-eq batch-size (len categories))
+        ) ERR-INVALID-BATCH-SIZE)
         
         (ok (map process-credential-issuance 
             credential-ids
@@ -237,12 +250,12 @@
     )
         (asserts! (get active endorser-data) ERR-NOT-AUTHORIZED)
         (asserts! (not (get revoked credential)) ERR-INVALID-STATUS)
-        (asserts! (< block-height (get expiry-date credential)) ERR-EXPIRED)
+        (asserts! (< stacks-block-height (get expiry-date credential)) ERR-EXPIRED)
         
         (map-set endorsements 
             {credential-id: credential-id, endorser: endorser}
             {
-                timestamp: block-height,
+                timestamp: stacks-block-height,
                 weight: weight,
                 comment: comment,
                 endorser-type: endorser-type
@@ -253,7 +266,7 @@
             {id: credential-id, student: student}
             (merge credential {
                 endorsements: (+ (get endorsements credential) u1),
-                last-endorsed: block-height
+                last-endorsed: stacks-block-height
             })
         )
         
@@ -261,7 +274,7 @@
             (merge endorser-data
                 {
                     reputation-score: (+ (get reputation-score endorser-data) weight),
-                    last-update: block-height
+                    last-update: stacks-block-height
                 }
             )
         )
@@ -282,6 +295,7 @@
         (credential (unwrap! (map-get? credentials {id: credential-id, student: tx-sender}) ERR-CREDENTIAL-NOT-FOUND))
     )
         (asserts! (not (get revoked credential)) ERR-INVALID-STATUS)
+        (asserts! (> expiry-time stacks-block-height) ERR-INVALID-EXPIRY)
         
         (map-set transfer-requests transfer-id
             {
@@ -289,7 +303,7 @@
                 old-owner: tx-sender,
                 new-owner: new-owner,
                 status: "pending",
-                request-time: block-height,
+                request-time: stacks-block-height,
                 expiry-time: expiry-time,
                 transfer-type: transfer-type
             }
@@ -305,6 +319,13 @@
 (define-private (is-institution (address principal))
     (default-to false (get active (map-get? institutions address)))
 )
+
+(define-private (sanitize-string (input (string-ascii 64)))
+    ;; Remove or escape problematic characters
+    ;; Return sanitized string
+    input
+)
+
 
 (define-private (process-credential-issuance
     (credential-id (string-ascii 64))
@@ -323,12 +344,13 @@
                 degree: degree,
                 year: year,
                 verified: true,
+                validation-level: u0,
                 endorsements: u0,
                 metadata-url: metadata-url,
                 expiry-date: expiry-date,
                 revoked: false,
                 category: category,
-                issue-date: block-height,
+                issue-date: stacks-block-height,
                 last-endorsed: u0
             }
         )
@@ -362,9 +384,13 @@
     (match (map-get? credentials {id: credential-id, student: student})
         credential (and 
             (not (get revoked credential))
-            (< block-height (get expiry-date credential))
+            (< stacks-block-height (get expiry-date credential))
             (get verified credential)
         )
         false
     )
+)
+
+(define-read-only (get-validation-level (credential-id (string-ascii 64)) (student principal))
+    (default-to u0 (get validation-level (map-get? credentials {id: credential-id, student: student})))
 )
